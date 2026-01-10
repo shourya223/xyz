@@ -1,10 +1,26 @@
 [
   {
-    "id": "manual_1",
-    "title": "Manual Test - Cyberpunk City",
-    "subreddit": "manual",
+    "id": "backup_1",
+    "title": "Cyberpunk Rainy City",
+    "subreddit": "backup",
     "thumbnail": "https://images.wallpapersden.com/image/download/cyberpunk-city-art_bGZraWaUmZqaraWkpJRmbmdlrWZlbWU.jpg",
+    "video_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+    "permalink": "https://github.com"
+  },
+  {
+    "id": "backup_2",
+    "title": "Big Buck Bunny (Nature Test)",
+    "subreddit": "backup",
+    "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Big_buck_bunny_poster_big.jpg/800px-Big_buck_bunny_poster_big.jpg",
     "video_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    "permalink": "https://github.com"
+  },
+  {
+    "id": "backup_3",
+    "title": "Sintel (Fantasy/Action)",
+    "subreddit": "backup",
+    "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Sintel_poster.jpg/800px-Sintel_poster.jpg",
+    "video_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
     "permalink": "https://github.com"
   }
 ]
