@@ -3,95 +3,122 @@ from bs4 import BeautifulSoup
 import json
 import random
 import time
-import re
+import os
 
 OUTPUT_FILE = "featured.json"
 
-# MyLiveWallpapers is easier to scrape than MoeWalls
+# MotionBGS is often less protected than MoeWalls
 CATEGORIES = [
-    "https://mylivewallpapers.com/category/anime/",
-    "https://mylivewallpapers.com/category/scifi/",
-    "https://mylivewallpapers.com/category/fantasy/"
+    "https://www.motionbgs.com/category/anime/",
+    "https://www.motionbgs.com/category/games/",
+    "https://www.motionbgs.com/category/sci-fi/"
 ]
 
 def scrape():
-    print("🚀 STARTING SCRAPER...")
     final_list = []
+    seen_ids = set()
     
-    # Cloudscraper bypasses basic protection
-    scraper = cloudscraper.create_scraper(browser='chrome')
+    # Create a scraper that looks exactly like a real Chrome browser
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
 
-    for url in CATEGORIES:
-        print(f"🌍 Checking: {url}")
+    print("--- 🚀 STARTING MOTIONBGS SCRAPE ---")
+
+    for category_url in CATEGORIES:
+        print(f"🌍 Visiting: {category_url}")
+        
         try:
-            resp = scraper.get(url)
+            resp = scraper.get(category_url)
+            
+            # DEBUG: Check if we are blocked
+            if resp.status_code == 403 or "Just a moment" in resp.text:
+                print(f"   ❌ BLOCKED by Cloudflare on {category_url}")
+                continue
+
             soup = BeautifulSoup(resp.text, 'html.parser')
             
-            # Find all links inside <article> tags
-            links = []
-            for article in soup.find_all('article'):
-                a_tag = article.find('a')
-                if a_tag:
-                    links.append(a_tag['href'])
-
-            # Grab top 3 from each category
-            print(f"   Found {len(links)} posts. Grabbing top 3...")
+            # Find posts (MotionBGS structure)
+            posts = soup.select('div.post-thumbnail a')
             
-            for link in links[:3]:
+            if not posts:
+                print("   ⚠️ No posts found. CSS selectors might differ or page failed to load.")
+                continue
+
+            print(f"   Found {len(posts)} posts. Mining top 3...")
+
+            for post_link in posts[:3]:
+                link = post_link.get('href')
+                if not link: continue
+
                 try:
-                    # Go to the wallpaper page
-                    page = scraper.get(link)
-                    page_soup = BeautifulSoup(page.text, 'html.parser')
-
+                    # Visit the wallpaper page
+                    page_resp = scraper.get(link)
+                    page_soup = BeautifulSoup(page_resp.text, 'html.parser')
+                    
                     # 1. Get Title
-                    title = page_soup.find('h1').get_text(strip=True)
+                    title = "Unknown"
+                    h1 = page_soup.find('h1')
+                    if h1: title = h1.get_text(strip=True)
 
-                    # 2. Get Video URL (Look for .mp4 link)
+                    # 2. Get Video URL
                     video_url = None
-                    # Try finding the big download button
-                    btn = page_soup.select_one('a.btn-download')
-                    if btn:
+                    # Look for the specific download button
+                    btn = page_soup.find('a', id='download_button')
+                    if btn: 
                         video_url = btn['href']
-                    else:
-                        # Fallback: Find any link ending in .mp4
-                        for a in page_soup.find_all('a', href=True):
-                            if a['href'].endswith('.mp4'):
-                                video_url = a['href']
-                                break
+                    
+                    # Fallback: Look for <source> tag
+                    if not video_url:
+                        video_tag = page_soup.find('source', type='video/mp4')
+                        if video_tag: video_url = video_tag['src']
 
                     # 3. Get Thumbnail
                     thumb_url = ""
-                    meta_img = page_soup.find('meta', property='og:image')
-                    if meta_img:
-                        thumb_url = meta_img['content']
+                    # MotionBGS usually puts the main image in a specific div
+                    img_div = page_soup.find('div', class_='post-thumbnail')
+                    if img_div and img_div.find('img'):
+                        thumb_url = img_div.find('img')['src']
 
                     if video_url and thumb_url:
-                        item = {
-                            "id": link.split('/')[-2], # Use slug as ID
-                            "title": title,
-                            "subreddit": "MyLiveWallpapers",
-                            "thumbnail": thumb_url,
-                            "video_url": video_url,
-                            "permalink": link
-                        }
-                        final_list.append(item)
-                        print(f"   ✅ Got: {title[:20]}...")
+                        slug = link.strip("/").split("/")[-1]
+                        
+                        if slug not in seen_ids:
+                            final_list.append({
+                                "id": slug,
+                                "title": title,
+                                "subreddit": "MotionBGS",
+                                "thumbnail": thumb_url,
+                                "video_url": video_url,
+                                "permalink": link
+                            })
+                            seen_ids.add(slug)
+                            print(f"      ✅ Got: {title[:20]}...")
                     
-                    time.sleep(1) # Sleep to avoid ban
+                    time.sleep(2) # Sleep to avoid getting banned
 
                 except Exception as e:
-                    print(f"   ⚠️ Skipping post: {e}")
+                    print(f"      ⚠️ Failed post: {e}")
 
         except Exception as e:
-            print(f"❌ Category failed: {e}")
+            print(f"   ⚠️ Category failed: {e}")
 
-    # FORCE SAVE EVEN IF EMPTY (For debugging)
-    print(f"💾 Saving {len(final_list)} items to {OUTPUT_FILE}...")
-    
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(final_list, f, indent=2)
-    
-    print("🎉 DONE.")
+    # SAFETY CHECK: Only save if we actually found something
+    if len(final_list) > 0:
+        random.shuffle(final_list)
+        with open(OUTPUT_FILE, "w") as f:
+            json.dump(final_list, f, indent=2)
+        print(f"💾 SUCCESSFULLY SAVED {len(final_list)} WALLPAPERS.")
+    else:
+        print("❌ SCRAPE FAILED: List is empty. Not overwriting file.")
+        # Create a dummy file if one doesn't exist so the workflow doesn't crash
+        if not os.path.exists(OUTPUT_FILE):
+             with open(OUTPUT_FILE, "w") as f:
+                json.dump([], f)
 
 if __name__ == "__main__":
     scrape()
