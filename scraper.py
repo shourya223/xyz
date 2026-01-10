@@ -5,29 +5,31 @@ import random
 # --- CONFIG ---
 OUTPUT_FILE = "featured.json"
 
-# The specific flavor you asked for
+# A curated list of "High Aesthetic" subreddits
+# We removed r/jdm because it has too many memes/text posts.
 SUBREDDITS = [
-    "initiald",         # Classic JDM/Drift
-    "jdm",              # General JDM cars
-    "Outrun",           # Cyberpunk/Synthwave cars
-    "Cyberpunk",        # Futuristic/Anime vibe
-    "Cinemagraphs",     # High quality loops
-    "animegifs"         # Anime clips
+    "Moescape",         # High-quality Anime Scenery (The best for backgrounds)
+    "AnimeGifs",        # Actual anime clips
+    "Outrun",           # Synthwave/Neon cars
+    "Kyousaya",         # Specific high-quality anime art style
+    "CityPorn",         # High-res city nightscapes
+    "CarPorn",          # High-res car photography (No memes)
+    "Cinemagraphs",     # Professional loops
+    "ImaginarySliceOfLife" # Chill anime vibes
 ]
 
 def scrape():
     final_list = []
     seen_ids = set()
     
-    print("--- STARTING PROXY SCRAPE ---")
+    print("--- STARTING HIGH-QUALITY SCRAPE ---")
 
     for sub in SUBREDDITS:
-        # We ask the Proxy API for 10 posts from each subreddit
-        # This bypasses Reddit's API blocking completely.
-        url = f"https://meme-api.com/gimme/{sub}/10"
+        # Fetch 50 posts (Meme-API limit) so we have a pool to filter from
+        url = f"https://meme-api.com/gimme/{sub}/50"
         
         try:
-            print(f"🔗 Connecting to r/{sub} via Proxy...")
+            print(f"💎 Mining r/{sub}...")
             resp = requests.get(url, timeout=15)
             
             if resp.status_code != 200:
@@ -37,60 +39,73 @@ def scrape():
             data = resp.json()
             posts = data.get("memes", [])
             
+            # --- QUALITY FILTER ---
+            filtered_posts = []
             for post in posts:
-                # We want high quality images/gifs that can act as wallpapers
+                # 1. REMOVE NSFW (Just in case)
+                if post.get("nsfw", False):
+                    continue
+
+                # 2. UPVOTE THRESHOLD (The "Shitpost Filter")
+                # If a post has less than 300 upvotes, it's probably low quality or a random question.
+                if post.get("ups", 0) < 300:
+                    continue
+
+                # 3. URL CHECK
                 media_url = post.get("url", "")
-                
-                # FILTER: Ensure it's not a tiny thumbnail or broken link
                 if not media_url.startswith("http"):
                     continue
-                
-                # TRICK: Convert .gif to .mp4 for better performance if hosted on Imgur/Reddit
-                # (AVPlayer handles mp4 much better than heavy gifs)
+
+                filtered_posts.append(post)
+
+            # Sort by upvotes (Best content first)
+            filtered_posts.sort(key=lambda x: x["ups"], reverse=True)
+
+            # Take the top 5 BEST items from this subreddit
+            top_picks = filtered_posts[:5]
+
+            for post in top_picks:
+                # Fix Imgur/Reddit GIF links to MP4 where possible for performance
+                media_url = post["url"]
                 if "imgur" in media_url and media_url.endswith(".gif"):
                     media_url = media_url.replace(".gif", ".mp4")
-                elif "i.redd.it" in media_url and media_url.endswith(".gif"):
-                    # Reddit hosted gifs often don't have direct mp4 swaps easily accessible
-                    # without the raw preview link, but AVPlayer usually handles GIFs okay.
-                    pass
-
-                # We accept JPG/PNG (Images) AND MP4/GIF (Videos)
-                # Your engine can handle both now.
                 
+                # Deduplicate
                 if post["postLink"] not in seen_ids:
-                    # Use the highest res preview as thumbnail
+                    # Use high-res preview if available
                     thumb = post["preview"][-1] if post.get("preview") else media_url
                     
                     item = {
-                        "id": post["postLink"].split("/")[-1], # Unique ID from URL
+                        "id": post["postLink"].split("/")[-1],
                         "title": post["title"],
                         "subreddit": sub,
                         "thumbnail": thumb,
-                        "video_url": media_url, # Might be an image, engine handles it
-                        "permalink": post["postLink"]
+                        "video_url": media_url,
+                        "permalink": post["postLink"],
+                        "score": post["ups"] # Just for debugging
                     }
                     
                     final_list.append(item)
                     seen_ids.add(post["postLink"])
-                    print(f"   ✅ Found: {post['title'][:20]}...")
+                    print(f"   ✨ Added: {post['title'][:20]}... ({post['ups']} upvotes)")
 
         except Exception as e:
             print(f"   ⚠️ Exception: {e}")
 
-    # Shuffle for variety
+    # Shuffle the final mix so it's not sorted by subreddit
     random.shuffle(final_list)
     
-    # Keep the best 30
-    final_list = final_list[:30]
+    # Cap at 40 high-quality items
+    final_list = final_list[:40]
 
-    print(f"--- SCRAPE FINISHED. Total Items: {len(final_list)} ---")
+    print(f"--- SCRAPE FINISHED. Total Gems: {len(final_list)} ---")
     
     if len(final_list) > 0:
         with open(OUTPUT_FILE, "w") as f:
             json.dump(final_list, f, indent=2)
         print("💾 featured.json updated.")
     else:
-        print("⚠️ No items found.")
+        print("⚠️ No items found after filtering.")
 
 if __name__ == "__main__":
     scrape()
