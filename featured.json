@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "id": "manual_1",
+    "title": "Manual Test - Cyberpunk City",
+    "subreddit": "manual",
+    "thumbnail": "https://images.wallpapersden.com/image/download/cyberpunk-city-art_bGZraWaUmZqaraWkpJRmbmdlrWZlbWU.jpg",
+    "video_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    "permalink": "https://github.com"
+  }
+]
