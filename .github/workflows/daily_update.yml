@@ -2,8 +2,8 @@ name: Run Scraper
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # Every 4 hours
-  workflow_dispatch:      # Manual run button
+    - cron: '0 */6 * * *' # Every 6 hours
+  workflow_dispatch:      # Manual trigger
 
 permissions:
   contents: write
@@ -21,15 +21,17 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Install Dependencies
+      - name: Install Requests
         run: pip install requests
 
       - name: Run Scraper
+        # 👇 THIS PASSES YOUR SECRET KEY TO THE SCRIPT
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scraper.py
 
       - name: Save Results
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "🤖 New Wallpapers [skip ci]"
+          commit_message: "🤖 New Pexels Wallpapers"
           file_pattern: "featured.json"
-          skip_dirty_check: false
