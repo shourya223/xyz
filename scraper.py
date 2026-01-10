@@ -2,87 +2,95 @@ import requests
 import json
 import random
 import os
+import sys
 
 OUTPUT_FILE = "featured.json"
-API_KEY = os.environ.get("PEXELS_API_KEY") # We get this from GitHub Secrets
+API_KEY = os.environ.get("PEXELS_API_KEY")
+MAX_ITEMS = 100  # <--- Change this to however many you want to keep total
 
-# What do you want to search for?
-QUERIES = ["anime", "cyberpunk", "neon city", "space", "gaming"]
-
-def get_best_video(video_files):
-    # Find the highest resolution video that is MP4
-    best_file = None
-    max_width = 0
-    
-    for file in video_files:
-        if file['file_type'] == 'video/mp4':
-            if file['width'] > max_width:
-                max_width = file['width']
-                best_file = file
-    return best_file
+QUERIES = ["anime", "cyberpunk", "neon", "space", "gaming", "lofi", "fantasy", "nature"]
 
 def scrape():
     if not API_KEY:
-        print("❌ CRITICAL ERROR: PEXELS_API_KEY is missing!")
-        return
+        print("❌ ERROR: PEXELS_API_KEY is missing.")
+        sys.exit(1)
 
-    headers = {
-        "Authorization": API_KEY
-    }
+    headers = {"Authorization": API_KEY}
+    new_items = []
     
-    final_list = []
-    seen_ids = set()
+    print("--- 🚀 STARTING PEXELS SCRAPE ---")
 
-    print("--- 🚀 STARTING PEXELS FETCH ---")
-
+    # 1. Fetch New Wallpapers
     for query in QUERIES:
-        print(f"🌍 Searching Pexels for: {query}...")
-        
-        # We ask for landscape videos (good for desktop). 
-        # Change to 'portrait' if you want phone wallpapers.
-        url = f"https://api.pexels.com/videos/search?query={query}&per_page=5&orientation=landscape"
+        # Randomize page so we don't always get the same first 5 results
+        page = random.randint(1, 10) 
+        url = f"https://api.pexels.com/videos/search?query={query}&per_page=5&page={page}&orientation=landscape"
         
         try:
             resp = requests.get(url, headers=headers)
-            if resp.status_code != 200:
-                print(f"   ❌ Failed: {resp.status_code}")
-                continue
-                
+            if resp.status_code != 200: continue
+
             data = resp.json()
-            videos = data.get('videos', [])
-            
-            print(f"   Found {len(videos)} videos...")
+            for v in data.get('videos', []):
+                # Find best MP4
+                best_link = None
+                max_w = 0
+                for f in v['video_files']:
+                    if f['file_type'] == 'video/mp4' and f['width'] > max_w:
+                        max_w = f['width']
+                        best_link = f['link']
 
-            for v in videos:
-                best_video = get_best_video(v['video_files'])
-                
-                if best_video:
-                    # Pexels doesn't always have titles, so we make one
-                    title = f"{query.title()} Wallpaper {v['id']}"
-                    
-                    if v['id'] not in seen_ids:
-                        final_list.append({
-                            "id": str(v['id']),
-                            "title": title,
-                            "subreddit": "Pexels",
-                            "thumbnail": v['image'], # Pexels provides a thumbnail directly
-                            "video_url": best_video['link'],
-                            "permalink": v['url']
-                        })
-                        seen_ids.add(v['id'])
+                if best_link:
+                    new_items.append({
+                        "id": str(v['id']),
+                        "title": f"{query.title()} Wallpaper {v['id']}",
+                        "subreddit": "Pexels",
+                        "thumbnail": v['image'],
+                        "video_url": best_link,
+                        "permalink": v['url']
+                    })
 
-        except Exception as e:
-            print(f"   ⚠️ Error: {e}")
+        except Exception:
+            continue
 
-    # FORCE SAVE
-    if final_list:
-        random.shuffle(final_list)
-        # Save top 15
-        with open(OUTPUT_FILE, "w") as f:
-            json.dump(final_list[:15], f, indent=2)
-        print(f"💾 SAVED {len(final_list)} PEXELS WALLPAPERS.")
-    else:
-        print("❌ No videos found. Check your API Key.")
+    print(f"   ✨ Found {len(new_items)} new wallpapers.")
+
+    # 2. Load Existing Wallpapers
+    existing_items = []
+    if os.path.exists(OUTPUT_FILE):
+        try:
+            with open(OUTPUT_FILE, "r") as f:
+                existing_items = json.load(f)
+                print(f"   📂 Loaded {len(existing_items)} existing wallpapers.")
+        except json.JSONDecodeError:
+            existing_items = []
+
+    # 3. Merge and Remove Duplicates
+    # We use a dictionary keyed by ID to ensure uniqueness
+    combined = {}
+    
+    # Add old items first
+    for item in existing_items:
+        combined[item['id']] = item
+        
+    # Add new items (overwriting old ones if they exist, or just adding)
+    for item in new_items:
+        combined[item['id']] = item
+
+    # Convert back to list
+    final_list = list(combined.values())
+
+    # 4. Limit the Size (Keep list fresh but not infinite)
+    # Shuffle to mix old and new, then cut to MAX_ITEMS
+    random.shuffle(final_list)
+    if len(final_list) > MAX_ITEMS:
+        final_list = final_list[:MAX_ITEMS]
+
+    # 5. Save
+    with open(OUTPUT_FILE, "w") as f:
+        json.dump(final_list, f, indent=2)
+    
+    print(f"💾 SUCCESSFULLY SAVED {len(final_list)} TOTAL WALLPAPERS.")
 
 if __name__ == "__main__":
     scrape()
