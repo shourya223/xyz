@@ -4,10 +4,10 @@ import json
 import random
 import time
 import re
-import os
 
-# --- CONFIG ---
 OUTPUT_FILE = "featured.json"
+
+# MyLiveWallpapers is easier to scrape than MoeWalls
 CATEGORIES = [
     "https://mylivewallpapers.com/category/anime/",
     "https://mylivewallpapers.com/category/scifi/",
@@ -15,89 +15,83 @@ CATEGORIES = [
 ]
 
 def scrape():
+    print("🚀 STARTING SCRAPER...")
     final_list = []
-    seen_ids = set()
+    
+    # Cloudscraper bypasses basic protection
     scraper = cloudscraper.create_scraper(browser='chrome')
 
-    print("--- STARTING SCRAPE ---")
-
-    for category_url in CATEGORIES:
-        print(f"🌍 Visiting: {category_url}")
+    for url in CATEGORIES:
+        print(f"🌍 Checking: {url}")
         try:
-            resp = scraper.get(category_url)
-            if resp.status_code != 200:
-                print(f"❌ Failed to load category: {resp.status_code}")
-                continue
-            
+            resp = scraper.get(url)
             soup = BeautifulSoup(resp.text, 'html.parser')
-            # Select article links
-            posts = soup.select('article a')
             
-            # Filter clean links
-            valid_posts = []
-            for p in posts:
-                href = p.get('href')
-                if href and '/category/' not in href and '/page/' not in href:
-                    if href not in valid_posts:
-                        valid_posts.append(href)
+            # Find all links inside <article> tags
+            links = []
+            for article in soup.find_all('article'):
+                a_tag = article.find('a')
+                if a_tag:
+                    links.append(a_tag['href'])
 
-            # Process top 4 from each category
-            for link in valid_posts[:4]:
+            # Grab top 3 from each category
+            print(f"   Found {len(links)} posts. Grabbing top 3...")
+            
+            for link in links[:3]:
                 try:
-                    page_resp = scraper.get(link)
-                    page_soup = BeautifulSoup(page_resp.text, 'html.parser')
-                    
-                    # Get Title
-                    title = "Unknown"
-                    h1 = page_soup.find('h1')
-                    if h1: title = h1.get_text(strip=True)
+                    # Go to the wallpaper page
+                    page = scraper.get(link)
+                    page_soup = BeautifulSoup(page.text, 'html.parser')
 
-                    # Get Video URL
+                    # 1. Get Title
+                    title = page_soup.find('h1').get_text(strip=True)
+
+                    # 2. Get Video URL (Look for .mp4 link)
                     video_url = None
-                    # Method 1: Button
+                    # Try finding the big download button
                     btn = page_soup.select_one('a.btn-download')
-                    if btn: video_url = btn['href']
-                    
-                    # Method 2: Direct link
-                    if not video_url:
-                        mp4s = page_soup.find_all('a', href=re.compile(r'\.mp4$'))
-                        if mp4s: video_url = mp4s[0]['href']
+                    if btn:
+                        video_url = btn['href']
+                    else:
+                        # Fallback: Find any link ending in .mp4
+                        for a in page_soup.find_all('a', href=True):
+                            if a['href'].endswith('.mp4'):
+                                video_url = a['href']
+                                break
 
-                    # Get Thumbnail
+                    # 3. Get Thumbnail
                     thumb_url = ""
-                    meta_img = page_soup.find("meta", property="og:image")
-                    if meta_img: thumb_url = meta_img["content"]
+                    meta_img = page_soup.find('meta', property='og:image')
+                    if meta_img:
+                        thumb_url = meta_img['content']
 
                     if video_url and thumb_url:
-                        slug = link.strip("/").split("/")[-1]
-                        if slug not in seen_ids:
-                            final_list.append({
-                                "id": slug,
-                                "title": title,
-                                "subreddit": "MyLiveWallpapers",
-                                "thumbnail": thumb_url,
-                                "video_url": video_url,
-                                "permalink": link
-                            })
-                            seen_ids.add(slug)
-                            print(f"   ✅ Found: {title[:20]}...")
+                        item = {
+                            "id": link.split('/')[-2], # Use slug as ID
+                            "title": title,
+                            "subreddit": "MyLiveWallpapers",
+                            "thumbnail": thumb_url,
+                            "video_url": video_url,
+                            "permalink": link
+                        }
+                        final_list.append(item)
+                        print(f"   ✅ Got: {title[:20]}...")
                     
-                    time.sleep(1)
+                    time.sleep(1) # Sleep to avoid ban
 
                 except Exception as e:
-                    print(f"   ⚠️ Failed post: {e}")
+                    print(f"   ⚠️ Skipping post: {e}")
 
         except Exception as e:
-            print(f"⚠️ Category Error: {e}")
+            print(f"❌ Category failed: {e}")
 
-    # FORCE SAVE
-    random.shuffle(final_list)
-    if len(final_list) > 0:
-        with open(OUTPUT_FILE, "w") as f:
-            json.dump(final_list, f, indent=2)
-        print(f"💾 SUCCESSFULLY SAVED {len(final_list)} ITEMS TO {OUTPUT_FILE}")
-    else:
-        print("❌ NO WALLPAPERS FOUND - Check selectors")
+    # FORCE SAVE EVEN IF EMPTY (For debugging)
+    print(f"💾 Saving {len(final_list)} items to {OUTPUT_FILE}...")
+    
+    with open(OUTPUT_FILE, "w") as f:
+        json.dump(final_list, f, indent=2)
+    
+    print("🎉 DONE.")
 
 if __name__ == "__main__":
     scrape()
