@@ -1,107 +1,96 @@
 import requests
 import json
-import re
 import random
 
 # --- CONFIG ---
 OUTPUT_FILE = "featured.json"
-# We will scrape these categories for variety
-URLS = [
-    "https://mixkit.co/free-stock-video/abstract/",
-    "https://mixkit.co/free-stock-video/nature/",
-    "https://mixkit.co/free-stock-video/technology/"
-]
 
-# Browser Identity (Standard Chrome)
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-}
+# The specific flavor you asked for
+SUBREDDITS = [
+    "initiald",         # Classic JDM/Drift
+    "jdm",              # General JDM cars
+    "Outrun",           # Cyberpunk/Synthwave cars
+    "Cyberpunk",        # Futuristic/Anime vibe
+    "Cinemagraphs",     # High quality loops
+    "animegifs"         # Anime clips
+]
 
 def scrape():
     final_list = []
     seen_ids = set()
     
-    print("--- STARTING MIXKIT SCRAPE ---")
+    print("--- STARTING PROXY SCRAPE ---")
 
-    for url in URLS:
-        print(f"🌍 Fetching page: {url}")
+    for sub in SUBREDDITS:
+        # We ask the Proxy API for 10 posts from each subreddit
+        # This bypasses Reddit's API blocking completely.
+        url = f"https://meme-api.com/gimme/{sub}/10"
+        
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
+            print(f"🔗 Connecting to r/{sub} via Proxy...")
+            resp = requests.get(url, timeout=15)
+            
             if resp.status_code != 200:
-                print(f"   ❌ Failed: {resp.status_code}")
+                print(f"   ❌ API Error: {resp.status_code}")
                 continue
+            
+            data = resp.json()
+            posts = data.get("memes", [])
+            
+            for post in posts:
+                # We want high quality images/gifs that can act as wallpapers
+                media_url = post.get("url", "")
+                
+                # FILTER: Ensure it's not a tiny thumbnail or broken link
+                if not media_url.startswith("http"):
+                    continue
+                
+                # TRICK: Convert .gif to .mp4 for better performance if hosted on Imgur/Reddit
+                # (AVPlayer handles mp4 much better than heavy gifs)
+                if "imgur" in media_url and media_url.endswith(".gif"):
+                    media_url = media_url.replace(".gif", ".mp4")
+                elif "i.redd.it" in media_url and media_url.endswith(".gif"):
+                    # Reddit hosted gifs often don't have direct mp4 swaps easily accessible
+                    # without the raw preview link, but AVPlayer usually handles GIFs okay.
+                    pass
 
-            html = resp.text
-            
-            # Mixkit HTML Structure (Regex is faster than importing BeautifulSoup)
-            # We look for the video item containers
-            # Pattern: Finds the video title and the preview URL
-            # Note: Mixkit puts the video URL in a <video> tag or data attribute
-            
-            # 1. Find all video entries
-            # This regex looks for the JSON data Mixkit embeds in the page for each video
-            matches = re.findall(r'window\.__NUXT__=(.*?);', html)
-            
-            if matches:
-                # If they use NUXT (modern JS framework), extracting is hard without parsing JS.
-                # Let's use a simpler "dumb" regex to find .mp4 links in the raw HTML.
+                # We accept JPG/PNG (Images) AND MP4/GIF (Videos)
+                # Your engine can handle both now.
                 
-                # Find all .mp4 URLs (Low res previews are good for thumbnails, High res for video)
-                # Mixkit often separates them. Let's find the "download" page links.
-                pass
-            
-            # FALLBACK STRATEGY: Simple Regex for video tags
-            # Mixkit provides a nice MP4 preview for every item.
-            video_urls = re.findall(r'src="(https://assets.mixkit.co/videos/preview/mixkit-.*?\.mp4)"', html)
-            
-            for vid_url in video_urls:
-                # Create a unique ID from the filename
-                # url example: .../mixkit-red-and-blue-lights-345.mp4
-                slug = vid_url.split("/")[-1].replace(".mp4", "")
-                
-                if slug not in seen_ids:
-                    # Construct a nice title
-                    # "mixkit-red-and-blue-lights-345" -> "Red And Blue Lights"
-                    title_parts = slug.split("-")[1:-1] # Skip 'mixkit' and the number
-                    title = " ".join(title_parts).title()
-                    
-                    # Generate a thumbnail URL (Mixkit thumbnails follow a pattern)
-                    # Video: .../preview/mixkit-name-123.mp4
-                    # Thumb: .../thumb/mixkit-name-123.jpg (Guessing, but safer to use a placeholder or the video itself)
-                    
-                    # Since we are lazy, we will use the VIDEO URL as the thumb URL too. 
-                    # Your App's ThumbnailGenerator handles this perfectly!
+                if post["postLink"] not in seen_ids:
+                    # Use the highest res preview as thumbnail
+                    thumb = post["preview"][-1] if post.get("preview") else media_url
                     
                     item = {
-                        "id": slug,
-                        "title": title,
-                        "subreddit": "Mixkit", # Keeping the field name compatible
-                        "thumbnail": vid_url,  # Your app generates thumbs from video URLs anyway!
-                        "video_url": vid_url,
-                        "permalink": "https://mixkit.co"
+                        "id": post["postLink"].split("/")[-1], # Unique ID from URL
+                        "title": post["title"],
+                        "subreddit": sub,
+                        "thumbnail": thumb,
+                        "video_url": media_url, # Might be an image, engine handles it
+                        "permalink": post["postLink"]
                     }
                     
                     final_list.append(item)
-                    seen_ids.add(slug)
-                    print(f"   ✅ Found: {title}")
+                    seen_ids.add(post["postLink"])
+                    print(f"   ✅ Found: {post['title'][:20]}...")
 
         except Exception as e:
             print(f"   ⚠️ Exception: {e}")
 
-    # Randomize the list so it's not the same order every day
+    # Shuffle for variety
     random.shuffle(final_list)
     
-    # Keep top 20
-    final_list = final_list[:20]
+    # Keep the best 30
+    final_list = final_list[:30]
 
-    print(f"--- SCRAPE FINISHED. Total Videos: {len(final_list)} ---")
+    print(f"--- SCRAPE FINISHED. Total Items: {len(final_list)} ---")
     
     if len(final_list) > 0:
         with open(OUTPUT_FILE, "w") as f:
             json.dump(final_list, f, indent=2)
         print("💾 featured.json updated.")
     else:
-        print("⚠️ No videos found. Is the regex broken?")
+        print("⚠️ No items found.")
 
 if __name__ == "__main__":
     scrape()
