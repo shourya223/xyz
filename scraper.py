@@ -1,91 +1,89 @@
-import cloudscraper
-from bs4 import BeautifulSoup
 import json
 import random
 import time
 import re
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # --- CONFIG ---
 OUTPUT_FILE = "featured.json"
-
 CATEGORIES = [
     "https://moewalls.com/category/anime/",
     "https://moewalls.com/category/cars/",
     "https://moewalls.com/category/cyberpunk/"
 ]
 
+def get_driver():
+    options = Options()
+    options.add_argument("--headless=new") # Modern headless mode (less detectable)
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    
+    driver = webdriver.Chrome(options=options)
+    return driver
+
 def scrape():
     final_list = []
     seen_ids = set()
-
-    # Initialize Cloudscraper to bypass Cloudflare
-    scraper = cloudscraper.create_scraper(browser='chrome')
+    driver = get_driver()
     
-    print("--- STARTING MOEWALLS SCRAPE ---")
+    print("--- STARTING SELENIUM SCRAPE ---")
 
-    for category_url in CATEGORIES:
-        print(f"🌍 Visiting: {category_url}...")
-        
-        try:
-            # use scraper.get instead of requests.get
-            resp = scraper.get(category_url, timeout=15)
+    try:
+        for category_url in CATEGORIES:
+            print(f"🌍 Visiting: {category_url}...")
+            driver.get(category_url)
             
-            if resp.status_code != 200:
-                print(f"   ❌ Failed: {resp.status_code}")
-                continue
-            
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # MoeWalls posts are usually in h2.entry-title > a
-            posts = soup.find_all('h2', class_='entry-title')
-            
-            if not posts:
-                print("   ⚠️ No posts found. CSS selectors might have changed.")
+            # Wait for posts to load
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CLASS_NAME, "entry-title"))
+                )
+            except:
+                print("   ⚠️ Timeout waiting for posts. Moving on.")
                 continue
 
-            print(f"   Found {len(posts)} posts. Mining top 5...")
+            # Find posts
+            posts = driver.find_elements(By.CSS_SELECTOR, "h2.entry-title a")
+            post_links = [p.get_attribute("href") for p in posts[:5]] # Store links first to avoid stale elements
             
-            # Process top 5
-            for post in posts[:5]:
+            print(f"   Found {len(post_links)} posts. Mining...")
+
+            for link in post_links:
+                if not link: continue
+                
                 try:
-                    link_tag = post.find('a')
-                    if not link_tag: continue
+                    driver.get(link)
+                    time.sleep(2) # Let JS load
                     
-                    link = link_tag['href']
-                    title = post.get_text(strip=True)
+                    title = driver.title.replace(" Live Wallpaper - MoeWalls", "")
                     
-                    # --- DEEP DIVE ---
-                    # scraper.get maintains cookies/session from the main page visit
-                    page_resp = scraper.get(link, timeout=10)
-                    page_soup = BeautifulSoup(page_resp.text, 'html.parser')
-                    
+                    # Strategy 1: Find Video Source directly
                     video_url = None
+                    try:
+                        video_tag = driver.find_element(By.CSS_SELECTOR, "source[type='video/mp4']")
+                        video_url = video_tag.get_attribute("src")
+                    except:
+                        pass
                     
-                    # Strategy 1: Direct <source> tag
-                    video_tag = page_soup.find('source', type='video/mp4')
-                    if video_tag:
-                        video_url = video_tag['src']
-                    
-                    # Strategy 2: Download Button
+                    # Strategy 2: Look for 'file: "url"' pattern in page source (common in players)
                     if not video_url:
-                        # MoeWalls often uses a specific class for the download button
-                        download_btn = page_soup.find('a', class_='download-link')
-                        if download_btn:
-                            video_url = download_btn['href']
-
-                    # Strategy 3: Regex search in scripts (Fallback)
-                    # sometimes the video is inside a script variable like "file": "..."
-                    if not video_url:
-                        match = re.search(r'file:\s*"([^"]+\.mp4)"', page_resp.text)
+                        match = re.search(r'file:\s*"([^"]+\.mp4)"', driver.page_source)
                         if match:
                             video_url = match.group(1)
 
                     # Get Thumbnail
                     thumb_url = ""
-                    img_tag = page_soup.find('img', class_='wp-post-image')
-                    if img_tag:
-                        # Handle lazy loaded images
-                        thumb_url = img_tag.get('data-src') or img_tag.get('src') or ""
+                    try:
+                        img_tag = driver.find_element(By.CLASS_NAME, "wp-post-image")
+                        thumb_url = img_tag.get_attribute("data-src") or img_tag.get_attribute("src")
+                    except:
+                        pass
 
                     if video_url and thumb_url:
                         slug = link.strip("/").split("/")[-1]
@@ -100,28 +98,24 @@ def scrape():
                                 "permalink": link
                             })
                             seen_ids.add(slug)
-                            print(f"      ✅ Got: {title[:30]}...")
-                    
-                    # Politeness sleep
-                    time.sleep(1.5)
+                            print(f"      ✅ Got: {title[:20]}...")
 
                 except Exception as e:
-                    print(f"      ⚠️ Failed individual post: {e}")
-                    continue
+                    print(f"      ⚠️ Failed post: {e}")
 
-        except Exception as e:
-            print(f"   ⚠️ Category failed: {e}")
+    except Exception as e:
+        print(f"❌ Critical Error: {e}")
+    finally:
+        driver.quit()
 
-    # Shuffle results
+    # Shuffle and Save
     random.shuffle(final_list)
-    
-    # Save
     if len(final_list) > 0:
         with open(OUTPUT_FILE, "w") as f:
             json.dump(final_list, f, indent=2)
-        print(f"💾 {OUTPUT_FILE} updated with {len(final_list)} wallpapers.")
+        print(f"💾 Saved {len(final_list)} wallpapers to {OUTPUT_FILE}")
     else:
-        print("⚠️ No wallpapers found. Double-check selectors or Cloudflare level.")
+        print("⚠️ No wallpapers found. Cloudflare might still be blocking.")
 
 if __name__ == "__main__":
     scrape()
