@@ -6,9 +6,10 @@ import sys
 
 OUTPUT_FILE = "featured.json"
 API_KEY = os.environ.get("PEXELS_API_KEY")
-MAX_ITEMS = 100  # <--- Change this to however many you want to keep total
+MAX_ITEMS = 200  # <--- Cap the list at 200 items
 
-QUERIES = ["anime", "cyberpunk", "neon", "space", "gaming", "lofi", "fantasy", "nature"]
+# We will fetch A LOT of videos now
+QUERIES = ["anime", "cyberpunk", "neon city", "sci-fi", "gaming", "fantasy landscape", "lofi"]
 
 def scrape():
     if not API_KEY:
@@ -18,21 +19,26 @@ def scrape():
     headers = {"Authorization": API_KEY}
     new_items = []
     
-    print("--- 🚀 STARTING PEXELS SCRAPE ---")
+    print("--- 🚀 STARTING BULK FETCH ---")
 
-    # 1. Fetch New Wallpapers
     for query in QUERIES:
-        # Randomize page so we don't always get the same first 5 results
-        page = random.randint(1, 10) 
-        url = f"https://api.pexels.com/videos/search?query={query}&per_page=5&page={page}&orientation=landscape"
+        # Request 40 videos per category (40 * 7 categories = ~280 potential videos)
+        url = f"https://api.pexels.com/videos/search?query={query}&per_page=40&orientation=landscape"
         
         try:
+            print(f"🌍 Fetching up to 40 videos for: {query}...")
             resp = requests.get(url, headers=headers)
-            if resp.status_code != 200: continue
+            
+            if resp.status_code != 200:
+                print(f"   ⚠️ Failed: {resp.status_code}")
+                continue
 
             data = resp.json()
-            for v in data.get('videos', []):
-                # Find best MP4
+            videos = data.get('videos', [])
+            print(f"   ✅ Received {len(videos)} videos.")
+
+            for v in videos:
+                # Find best MP4 quality
                 best_link = None
                 max_w = 0
                 for f in v['video_files']:
@@ -50,47 +56,39 @@ def scrape():
                         "permalink": v['url']
                     })
 
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"   ⚠️ Error: {e}")
 
-    print(f"   ✨ Found {len(new_items)} new wallpapers.")
-
-    # 2. Load Existing Wallpapers
+    # --- MERGE WITH EXISTING ---
     existing_items = []
     if os.path.exists(OUTPUT_FILE):
         try:
             with open(OUTPUT_FILE, "r") as f:
                 existing_items = json.load(f)
-                print(f"   📂 Loaded {len(existing_items)} existing wallpapers.")
-        except json.JSONDecodeError:
+        except:
             existing_items = []
 
-    # 3. Merge and Remove Duplicates
-    # We use a dictionary keyed by ID to ensure uniqueness
+    # Use a dictionary to remove duplicates by ID
     combined = {}
-    
-    # Add old items first
     for item in existing_items:
         combined[item['id']] = item
-        
-    # Add new items (overwriting old ones if they exist, or just adding)
     for item in new_items:
         combined[item['id']] = item
 
-    # Convert back to list
     final_list = list(combined.values())
-
-    # 4. Limit the Size (Keep list fresh but not infinite)
-    # Shuffle to mix old and new, then cut to MAX_ITEMS
+    
+    # Shuffle and Clip
     random.shuffle(final_list)
     if len(final_list) > MAX_ITEMS:
         final_list = final_list[:MAX_ITEMS]
 
-    # 5. Save
+    # FORCE SAVE
     with open(OUTPUT_FILE, "w") as f:
         json.dump(final_list, f, indent=2)
     
-    print(f"💾 SUCCESSFULLY SAVED {len(final_list)} TOTAL WALLPAPERS.")
+    print("---------------------------------------------------")
+    print(f"🎉 FINAL COUNT: {len(final_list)} WALLPAPERS SAVED.")
+    print("---------------------------------------------------")
 
 if __name__ == "__main__":
     scrape()
