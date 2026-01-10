@@ -1,107 +1,88 @@
 import requests
 import json
 import random
-from datetime import datetime
+import os
 
 OUTPUT_FILE = "featured.json"
+API_KEY = os.environ.get("PEXELS_API_KEY") # We get this from GitHub Secrets
 
-# Using "Hot" guarantees fresh content. "Top" guarantees quality.
-# We mix them to ensure we ALWAYS get results.
-SOURCES = [
-    "https://www.reddit.com/r/LivelyWallpaper/hot.json?limit=10",
-    "https://www.reddit.com/r/LiveAnimeWallpapers/hot.json?limit=10",
-    "https://www.reddit.com/r/moescape/hot.json?limit=10"
-]
+# What do you want to search for?
+QUERIES = ["anime", "cyberpunk", "neon city", "space", "gaming"]
+
+def get_best_video(video_files):
+    # Find the highest resolution video that is MP4
+    best_file = None
+    max_width = 0
+    
+    for file in video_files:
+        if file['file_type'] == 'video/mp4':
+            if file['width'] > max_width:
+                max_width = file['width']
+                best_file = file
+    return best_file
 
 def scrape():
+    if not API_KEY:
+        print("❌ CRITICAL ERROR: PEXELS_API_KEY is missing!")
+        return
+
+    headers = {
+        "Authorization": API_KEY
+    }
+    
     final_list = []
     seen_ids = set()
-    
-    # Fake browser header to prevent blocking
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GitHubAction/Scraper"
-    }
 
-    print("--- 🚀 STARTING SCRAPE ---")
+    print("--- 🚀 STARTING PEXELS FETCH ---")
 
-    for url in SOURCES:
+    for query in QUERIES:
+        print(f"🌍 Searching Pexels for: {query}...")
+        
+        # We ask for landscape videos (good for desktop). 
+        # Change to 'portrait' if you want phone wallpapers.
+        url = f"https://api.pexels.com/videos/search?query={query}&per_page=5&orientation=landscape"
+        
         try:
-            print(f"🌍 Visiting: {url}")
             resp = requests.get(url, headers=headers)
-            
             if resp.status_code != 200:
                 print(f"   ❌ Failed: {resp.status_code}")
                 continue
-
+                
             data = resp.json()
-            posts = data.get('data', {}).get('children', [])
-            print(f"   Found {len(posts)} raw posts...")
+            videos = data.get('videos', [])
+            
+            print(f"   Found {len(videos)} videos...")
 
-            for post in posts:
-                p = post['data']
+            for v in videos:
+                best_video = get_best_video(v['video_files'])
                 
-                # --- SIMPLIFIED FILTERS ---
-                
-                # 1. Must be a video OR a high-res image (gif/gifv)
-                is_video = p.get('is_video')
-                url_ext = p.get('url', '').lower()[-4:]
-                if not is_video and url_ext not in ['.gif', '.mp4', '.mov']:
-                    continue
-                
-                # 2. Skip NSFW
-                if p.get('over_18'):
-                    continue
-
-                # 3. Get Video URL
-                video_url = ""
-                if is_video and 'reddit_video' in p['media']:
-                    video_url = p['media']['reddit_video']['fallback_url'].split('?')[0]
-                else:
-                    video_url = p['url'] # For direct .mp4 links
-
-                # 4. Get Thumbnail
-                thumb = p.get('thumbnail', '')
-                if not thumb.startswith('http'):
-                    thumb = "https://www.redditstatic.com/icon.png"
-
-                if p['id'] not in seen_ids:
-                    final_list.append({
-                        "id": p['id'],
-                        "title": p['title'],
-                        "subreddit": p['subreddit_name_prefixed'],
-                        "thumbnail": thumb,
-                        "video_url": video_url,
-                        "permalink": f"https://reddit.com{p['permalink']}"
-                    })
-                    seen_ids.add(p['id'])
+                if best_video:
+                    # Pexels doesn't always have titles, so we make one
+                    title = f"{query.title()} Wallpaper {v['id']}"
+                    
+                    if v['id'] not in seen_ids:
+                        final_list.append({
+                            "id": str(v['id']),
+                            "title": title,
+                            "subreddit": "Pexels",
+                            "thumbnail": v['image'], # Pexels provides a thumbnail directly
+                            "video_url": best_video['link'],
+                            "permalink": v['url']
+                        })
+                        seen_ids.add(v['id'])
 
         except Exception as e:
-            print(f"❌ Error scraping {url}: {e}")
+            print(f"   ⚠️ Error: {e}")
 
-    # --- THE MAGIC FIX ---
-    # We add a "metadata" object at the top or shuffle the list.
-    # This ensures the file content is DIFFERENT every time, forcing Git to save.
-    
-    print(f"✅ Found {len(final_list)} valid wallpapers.")
-    
-    # Always save at least 15 items if found
-    random.shuffle(final_list)
-    output_data = final_list[:15]
-    
-    # Add a dummy entry with timestamp to FORCE a git update
-    output_data.insert(0, {
-        "id": "UPDATE_INFO",
-        "title": f"Updated at {datetime.now()}",
-        "subreddit": "SYSTEM",
-        "thumbnail": "",
-        "video_url": "",
-        "permalink": ""
-    })
-
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(output_data, f, indent=2)
-    
-    print(f"💾 Dumped {len(output_data)} items to {OUTPUT_FILE}")
+    # FORCE SAVE
+    if final_list:
+        random.shuffle(final_list)
+        # Save top 15
+        with open(OUTPUT_FILE, "w") as f:
+            json.dump(final_list[:15], f, indent=2)
+        print(f"💾 SAVED {len(final_list)} PEXELS WALLPAPERS.")
+    else:
+        print("❌ No videos found. Check your API Key.")
 
 if __name__ == "__main__":
     scrape()
